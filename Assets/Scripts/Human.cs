@@ -23,6 +23,10 @@ public class Human : MonoBehaviour
     [Tooltip("Probabilidad por golpe de matar al monstruo al instante (baja: el monstruo es más fuerte)")]
     [Range(0f, 1f)] public float instantKillChance = 0.03f;
 
+    [Header("Comida")]
+    [Tooltip("Distancia entre BORDES para poder comerse un cofre (0 = tocándolo)")]
+    public float eatRange = 0.2f;
+
     [Header("Human States")]
     public bool isAlive = true;
     public HumanState currentState = HumanState.Exploring;
@@ -109,18 +113,13 @@ public class Human : MonoBehaviour
             return;
         }
 
-        // 3. Pisando un cofre: abrirlo
-        Collider2D chestHit = Physics2D.OverlapCircle(transform.position, 0.3f, LayerMask.GetMask("Chests"));
-        if (chestHit != null && chestHit.GetComponent<Chest>() != null)
+        // 3 y 4. Cofre a la vista: si lo toca se lo come, si no va hacia él
+        Chest nearChest = FindNearestChest();
+        if (nearChest != null)
         {
-            currentState = HumanState.OpeningChest;
-            return;
-        }
-
-        // 4. Ve un cofre: ir por él en vez de correr hacia el monstruo
-        if (FindNearestChest() != null)
-        {
-            currentState = HumanState.SearchingChest;
+            currentState = EdgeDistance(this, nearChest) <= eatRange
+                ? HumanState.OpeningChest
+                : HumanState.SearchingChest;
             return;
         }
 
@@ -156,15 +155,12 @@ public class Human : MonoBehaviour
 
     void OpenChest()
     {
-        Collider2D chestHit = Physics2D.OverlapCircle(transform.position, 0.3f, LayerMask.GetMask("Chests"));
-        if (chestHit != null)
+        Chest chest = FindNearestChest();
+        if (chest != null && EdgeDistance(this, chest) <= eatRange)
         {
-            Chest chest = chestHit.GetComponent<Chest>();
-            if (chest != null)
-            {
-                chest.Open(this);
-            }
+            chest.Open(this);
         }
+        destination = transform.position;
         currentState = HumanState.Exploring;
     }
 

@@ -21,6 +21,10 @@ public class Chest : MonoBehaviour
     public ChestUpgrade upgrade;
     public float upgradeValue;
 
+    [Header("Comida: bonus garantizado")]
+    public float attackBoost = 0.5f;
+    public float speedBoost = 0.15f;
+
     [HideInInspector] public bool hasAmbusher = false; // un monstruo está escondido detrás
 
     private bool opened = false;
@@ -40,7 +44,7 @@ public class Chest : MonoBehaviour
     }
 
     /// <summary>
-    /// Un humano abre el cofre: recibe mejora o es atacado por un mímico.
+    /// Un humano se come el cofre: recibe mejora o es atacado por un mímico.
     /// </summary>
     public void Open(Human human)
     {
@@ -60,6 +64,11 @@ public class Chest : MonoBehaviour
         }
         else
         {
+            // Siempre sube fuerza y velocidad
+            human.ApplyUpgrade(ChestUpgrade.Attack, attackBoost);
+            human.ApplyUpgrade(ChestUpgrade.Speed, speedBoost);
+
+            // Más el bonus aleatorio que ya tenías (borra esta línea si no lo quieres)
             human.ApplyUpgrade(upgrade, upgradeValue);
         }
 

@@ -13,10 +13,15 @@ public class Human : MonoBehaviour
     public float visionRange = 6f;
 
     [Header("Combat")]
+    [Tooltip("Distancia entre BORDES de los colliders para poder golpear")]
     public float attackRange = 0.6f;
     public float attackCooldown = 1f;
     [Tooltip("Si la vida baja de este porcentaje, huye en vez de pelear")]
     [Range(0f, 1f)] public float fleeHealthThreshold = 0.4f;
+    [Tooltip("Probabilidad de entrar en pánico y huir al ver un monstruo (aunque tenga vida)")]
+    [Range(0f, 1f)] public float fleeOnSightChance = 0.35f;
+    [Tooltip("Probabilidad por golpe de matar al monstruo al instante (baja: el monstruo es más fuerte)")]
+    [Range(0f, 1f)] public float instantKillChance = 0.03f;
 
     [Header("Human States")]
     public bool isAlive = true;
@@ -25,6 +30,10 @@ public class Human : MonoBehaviour
     private Vector3 destination;
     private float attackTimer = 0f;
     private bool monsterInSight = false;
+
+    // Decisión de pelear/huir: se toma una vez por encuentro
+    private bool encounterDecided = false;
+    private bool panicked = false;
 
     public float CurrentSpeed
     {
@@ -65,16 +74,42 @@ public class Human : MonoBehaviour
 
     void EvaluateState()
     {
-        // 1. Monstruo cerca: corre más rápido y pelea o huye según la vida
-        monsterInSight = GetNearestMonster() != null;
+        // 1. Monstruo a la vista: corre más rápido y decide si huye
+        Monster monster = GetNearestMonster();
+        monsterInSight = monster != null;
+
         if (monsterInSight)
         {
+            // Al ver al monstruo por primera vez decide si le da miedo
+            if (!encounterDecided)
+            {
+                encounterDecided = true;
+                panicked = Random.value < fleeOnSightChance;
+            }
+
+            // Sobrevivir va primero: con miedo o poca vida huye, incluso si hay cofres
             bool healthy = (health / maxHealth) >= fleeHealthThreshold;
-            currentState = healthy ? HumanState.Fighting : HumanState.Fleeing;
+            if (!healthy || panicked)
+            {
+                currentState = HumanState.Fleeing;
+                return;
+            }
+        }
+        else
+        {
+            // Ya no ve monstruos: el próximo encuentro se decide de nuevo
+            encounterDecided = false;
+            panicked = false;
+        }
+
+        // 2. Monstruo pegado a él (lo está atacando): se defiende y contraataca
+        if (monsterInSight && EdgeDistance(this, monster) <= attackRange)
+        {
+            currentState = HumanState.Fighting;
             return;
         }
 
-        // 2. Pisando un cofre: abrirlo
+        // 3. Pisando un cofre: abrirlo
         Collider2D chestHit = Physics2D.OverlapCircle(transform.position, 0.3f, LayerMask.GetMask("Chests"));
         if (chestHit != null && chestHit.GetComponent<Chest>() != null)
         {
@@ -82,14 +117,21 @@ public class Human : MonoBehaviour
             return;
         }
 
-        // 3. Ve un cofre: ir por él
+        // 4. Ve un cofre: ir por él en vez de correr hacia el monstruo
         if (FindNearestChest() != null)
         {
             currentState = HumanState.SearchingChest;
             return;
         }
 
-        // 4. Explorar
+        // 5. Sin cofres a la vista: si hay monstruo, va a pelearlo
+        if (monsterInSight)
+        {
+            currentState = HumanState.Fighting;
+            return;
+        }
+
+        // 6. Explorar
         currentState = HumanState.Exploring;
     }
 
@@ -135,13 +177,17 @@ public class Human : MonoBehaviour
             return;
         }
 
-        destination = enemy.transform.position;
+        float dist = EdgeDistance(this, enemy);
 
-        float dist = Vector2.Distance(transform.position, enemy.transform.position);
-        if (dist <= attackRange && attackTimer <= 0f)
+        if (dist <= attackRange)
         {
-            attackTimer = attackCooldown;
-            enemy.TakeDamage(attack);
+            // Ya está al alcance: se planta y golpea (no sigue empujando el collider)
+            destination = transform.position;
+            TryAttack(enemy);
+        }
+        else
+        {
+            destination = enemy.transform.position;
         }
     }
 
@@ -150,17 +196,29 @@ public class Human : MonoBehaviour
         Monster enemy = GetNearestMonster();
         if (enemy == null) return;
 
-        Vector3 fleeDir = (transform.position - enemy.transform.position).normalized;
-        RaycastHit2D hit = Physics2D.Raycast(transform.position, fleeDir, visionRange, LayerMask.GetMask("Obstacles"));
+        bool cornered;
+        destination = GetFleePoint(transform.position, enemy.transform.position, visionRange, out cornered);
 
-        if (hit.collider != null)
+        // Sin salida: se defiende en vez de quedarse quieto
+        if (cornered && EdgeDistance(this, enemy) <= attackRange)
         {
-            float offset = transform.localScale.magnitude * 0.5f;
-            destination = hit.point - (Vector2)fleeDir * offset;
+            TryAttack(enemy);
+        }
+    }
+
+    void TryAttack(Monster enemy)
+    {
+        if (attackTimer > 0f) return;
+        attackTimer = attackCooldown;
+
+        // Pequeña probabilidad de matar al instante; si no, daño normal
+        if (Random.value < instantKillChance)
+        {
+            enemy.Kill();
         }
         else
         {
-            destination = transform.position + fleeDir * visionRange;
+            enemy.TakeDamage(attack);
         }
     }
 
@@ -196,11 +254,19 @@ public class Human : MonoBehaviour
 
         if (health <= 0f)
         {
-            isAlive = false;
-            Destroy(gameObject);
-            return true;
+            return Kill();
         }
         return false;
+    }
+
+    /// <summary>Muerte instantánea (golpe letal del monstruo).</summary>
+    public bool Kill()
+    {
+        if (!isAlive) return false;
+
+        isAlive = false;
+        Destroy(gameObject);
+        return true;
     }
 
     public void ApplyUpgrade(ChestUpgrade type, float value)
@@ -213,6 +279,66 @@ public class Human : MonoBehaviour
             case ChestUpgrade.Speed:   speed += value;                        break;
             case ChestUpgrade.Vision:  visionRange += value;                  break;
         }
+    }
+
+    // ---------- Utilidades ----------
+
+    /// <summary>
+    /// Distancia entre los BORDES de los colliders (0 si se tocan).
+    /// Si alguno no tiene collider, usa la distancia entre centros.
+    /// Evita el bug de "se quedan quietos": los colliders se bloquean entre sí
+    /// y los centros nunca llegan a estar dentro de attackRange.
+    /// Monster también la usa (Human.EdgeDistance).
+    /// </summary>
+    public static float EdgeDistance(Component a, Component b)
+    {
+        Collider2D ca = a.GetComponent<Collider2D>();
+        Collider2D cb = b.GetComponent<Collider2D>();
+
+        if (ca != null && cb != null)
+        {
+            return Mathf.Max(0f, ca.Distance(cb).distance);
+        }
+
+        return Vector2.Distance(a.transform.position, b.transform.position);
+    }
+
+    /// <summary>
+    /// Punto seguro hacia donde huir de una amenaza. Prueba varias direcciones
+    /// (alejándose de la amenaza) y elige la que tiene más espacio libre, así no
+    /// se queda pegado a una pared. 'cornered' es true si casi no hay salida.
+    /// Monster también la usa (Human.GetFleePoint).
+    /// </summary>
+    public static Vector3 GetFleePoint(Vector3 from, Vector3 threat, float range, out bool cornered)
+    {
+        Vector2 away = from - threat;
+        if (away.sqrMagnitude < 0.0001f) away = Random.insideUnitCircle;
+        away.Normalize();
+
+        int obstacleMask = LayerMask.GetMask("Obstacles");
+        float bestScore = float.MinValue;
+        float bestFree = 0f;
+        Vector2 bestDir = away;
+
+        for (int i = -3; i <= 3; i++)
+        {
+            Vector2 dir = (Vector2)(Quaternion.Euler(0f, 0f, i * 40f) * (Vector3)away);
+            RaycastHit2D hit = Physics2D.Raycast(from, dir, range, obstacleMask);
+            float free = hit.collider != null ? hit.distance : range;
+
+            // Prefiere direcciones libres y que no se desvíen mucho de "alejarse"
+            float score = free - Mathf.Abs(i) * 0.4f;
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestFree = free;
+                bestDir = dir;
+            }
+        }
+
+        cornered = bestFree < 0.8f;
+        float travel = Mathf.Max(0f, bestFree - 0.4f);
+        return from + (Vector3)(bestDir * travel);
     }
 
     // ---------- Búsquedas ----------

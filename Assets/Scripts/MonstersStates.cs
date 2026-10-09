@@ -4,5 +4,6 @@ public enum MonsterState
     Chasing,
     Attacking,
     Returning,
-    Ambushing
+    Ambushing,
+    Fleeing
 }

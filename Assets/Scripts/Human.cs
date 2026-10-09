@@ -21,7 +21,7 @@ public class Human : MonoBehaviour
     [Tooltip("Probabilidad de entrar en pánico y huir al ver un monstruo (aunque tenga vida)")]
     [Range(0f, 1f)] public float fleeOnSightChance = 0.35f;
     [Tooltip("Probabilidad por golpe de matar al monstruo al instante (baja: el monstruo es más fuerte)")]
-    [Range(0f, 1f)] public float instantKillChance = 0.03f;
+    [Range(0f, 1f)] public float instantKillChance = 0.15f;
 
     [Header("Comida")]
     [Tooltip("Distancia entre BORDES para poder comerse un cofre (0 = tocándolo)")]
@@ -117,9 +117,18 @@ public class Human : MonoBehaviour
         Chest nearChest = FindNearestChest();
         if (nearChest != null)
         {
-            currentState = EdgeDistance(this, nearChest) <= eatRange
-                ? HumanState.OpeningChest
-                : HumanState.SearchingChest;
+            bool eatNow = EdgeDistance(this, nearChest) <= eatRange;
+
+            // Si el monstruo está más cerca que el cofre, lo enfrenta en vez de ignorarlo
+            if (!eatNow && monsterInSight &&
+                Vector2.Distance(transform.position, monster.transform.position) <
+                Vector2.Distance(transform.position, nearChest.transform.position))
+            {
+                currentState = HumanState.Fighting;
+                return;
+            }
+
+            currentState = eatNow ? HumanState.OpeningChest : HumanState.SearchingChest;
             return;
         }
 

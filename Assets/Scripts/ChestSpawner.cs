@@ -10,7 +10,7 @@ public class ChestSpawner : MonoBehaviour
     public int maxChests = 15;
 
     [Header("Mimic")]
-    [Range(0f, 1f)] public float mimicChance = 0.25f;
+    [Range(0f, 1f)] public float mimicChance = 0.08f;
 
     [Header("Spawn cerca de las cuevas")]
     [Tooltip("Distancia extra más allá del radio de la cueva donde pueden aparecer cofres")]
